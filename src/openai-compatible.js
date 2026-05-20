@@ -7,13 +7,13 @@ export function createOpenAIClient(config) {
   const endpoint = chatCompletionsUrl(config.baseUrl);
 
   return {
-    async ask({ messages }) {
-      return retryRequest(() => askOnce({ endpoint, config, messages }), config);
+    async ask({ messages, expectedSoftwareQuestions }) {
+      return retryRequest(() => askOnce({ endpoint, config, messages, expectedSoftwareQuestions }), config);
     }
   };
 }
 
-async function askOnce({ endpoint, config, messages }) {
+async function askOnce({ endpoint, config, messages, expectedSoftwareQuestions }) {
   let parsed;
   try {
     parsed = await sendChatCompletion({ endpoint, config, messages, useResponseFormat: true });
@@ -40,6 +40,8 @@ async function askOnce({ endpoint, config, messages }) {
     });
   }
 
+  assertCompleteAnswerPayload({ content, parsed, expectedSoftwareQuestions });
+
   return {
     content,
     usage: parsed.usage ?? null
@@ -55,7 +57,19 @@ async function sendChatCompletion({ endpoint, config, messages, useResponseForma
   };
 
   if (config.reasoningEffort) {
-    requestBody.reasoning_effort = config.reasoningEffort;
+    if (isOpenRouterBaseUrl(config.baseUrl)) {
+      requestBody.reasoning = {
+        effort: config.reasoningEffort,
+        exclude: true
+      };
+    } else {
+      requestBody.reasoning_effort = config.reasoningEffort;
+    }
+  }
+
+  const openRouterReasoning = resolveOpenRouterReasoning(config);
+  if (openRouterReasoning && !requestBody.reasoning) {
+    requestBody.reasoning = openRouterReasoning;
   }
 
   const enableThinking = resolveEnableThinking(config);
@@ -247,6 +261,56 @@ function extractContent(parsed) {
   return typeof content === "string" ? content.trim() : "";
 }
 
+function assertCompleteAnswerPayload({ content, parsed, expectedSoftwareQuestions }) {
+  const expectedCount = Array.isArray(expectedSoftwareQuestions) ? expectedSoftwareQuestions.length : 0;
+  if (expectedCount === 0) {
+    return;
+  }
+
+  const answerCount = countAnswers(content);
+  if (answerCount >= expectedCount) {
+    return;
+  }
+
+  const finishReason = parsed.choices?.[0]?.finish_reason ?? parsed.choices?.[0]?.native_finish_reason ?? "unknown";
+  throw new ApiRequestError(`API response only included ${answerCount}/${expectedCount} answers; finish reason: ${finishReason}`, {
+    retryable: true
+  });
+}
+
+function countAnswers(content) {
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed.answers)) {
+      return parsed.answers.length;
+    }
+  } catch {
+    // Fall back to loose counting below.
+  }
+  return [...String(content).matchAll(/\b(YES|NO|UNKNOWN)\b/giu)].length;
+}
+
+function resolveOpenRouterReasoning(config) {
+  if (!isOpenRouterBaseUrl(config.baseUrl)) {
+    return null;
+  }
+  if (shouldCapOpenRouterReasoning(config.model)) {
+    return {
+      max_tokens: 32,
+      exclude: true
+    };
+  }
+  return null;
+}
+
+function isOpenRouterBaseUrl(baseUrl = "") {
+  try {
+    return new URL(baseUrl).hostname.endsWith("openrouter.ai");
+  } catch {
+    return String(baseUrl).includes("openrouter.ai");
+  }
+}
+
 function resolveEnableThinking(config) {
   if (config.enableThinking !== undefined) {
     return config.enableThinking;
@@ -257,6 +321,11 @@ function resolveEnableThinking(config) {
   }
 
   return undefined;
+}
+
+function shouldCapOpenRouterReasoning(model = "") {
+  const normalized = model.toLowerCase();
+  return normalized.includes("google/gemini-3.5-");
 }
 
 function shouldDisableThinkingByDefault(model = "") {
