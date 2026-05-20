@@ -1,0 +1,43 @@
+{
+  "name": "modelclock",
+  "version": "0.1.0",
+  "description": "Probe LLM knowledge cutoffs with dated software release versions.",
+  "type": "module",
+  "packageManager": "npm@11.14.1",
+  "author": "stevibe",
+  "license": "MIT",
+  "keywords": [
+    "llm",
+    "knowledge-cutoff",
+    "ai",
+    "cli",
+    "software-releases"
+  ],
+  "bin": {
+    "modelclock": "./bin/modelclock.js"
+  },
+  "files": [
+    "bin",
+    "data/software-releases.json",
+    "docs",
+    "scripts",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node ./bin/modelclock.js",
+    "build:software-data": "node ./scripts/build-software-dataset.js",
+    "smoke": "node ./bin/modelclock.js --dry-run",
+    "check": "node --check ./bin/modelclock.js && node --check ./src/cli.js && node --check ./src/config.js && node --check ./src/dataset.js && node --check ./src/env.js && node --check ./src/openai-compatible.js && node --check ./src/prompt.js && node --check ./src/search.js && node --check ./scripts/build-software-dataset.js && node ./bin/modelclock.js --help > /dev/null",
+    "test": "npm run check"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "figlet": "^1.11.0",
+    "ink": "^7.0.3",
+    "react": "^19.2.6"
+  }
+}
