@@ -309,12 +309,29 @@ function publicOptions(options) {
   const copy = { ...options };
   delete copy.modelsExplicit;
   if (copy.provider) {
-    copy.provider = {
-      ...copy.provider,
-      apiKey: copy.provider.apiKey ? maskSecret(copy.provider.apiKey) : ""
-    };
+    copy.provider = publicProvider(copy.provider);
+  }
+  if (copy.modelRef) {
+    copy.modelRef = publicModelRef(copy.modelRef);
+  }
+  if (Array.isArray(copy.modelRefs)) {
+    copy.modelRefs = copy.modelRefs.map(publicModelRef);
   }
   return copy;
+}
+
+function publicModelRef(ref) {
+  return {
+    ...ref,
+    ...(ref.provider ? { provider: publicProvider(ref.provider) } : {})
+  };
+}
+
+function publicProvider(provider) {
+  return {
+    ...provider,
+    apiKey: provider.apiKey ? maskSecret(provider.apiKey) : ""
+  };
 }
 
 async function readInteractiveOptions(args, env, config) {
