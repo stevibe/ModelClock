@@ -1,6 +1,6 @@
 {
   "name": "modelclock",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Probe LLM knowledge cutoffs with dated software release versions.",
   "type": "module",
   "packageManager": "npm@11.14.1",
