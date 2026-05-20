@@ -127,7 +127,7 @@ real versions per probe date: 5
 decoy versions per probe date: 3
 independent replicate passes: 3
 temperature: 0
-max response tokens: 512
+max response tokens: 2048
 credible interval target: 95% range within 14 days
 minimum rounds before accepting a tight interval: 12
 max rounds: 30 per replicate

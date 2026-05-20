@@ -83,7 +83,7 @@ const DEFAULTS = {
   maxSteps: 30,
   trials: 1,
   temperature: 0,
-  maxTokens: 512,
+  maxTokens: 2048,
   probeMode: "software-version",
   replicates: 3,
   probeDatesPerRound: 3,
