@@ -108,7 +108,7 @@ const TAGLINE = "Probe LLM knowledge cutoffs";
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   loadDotEnv(LOCAL_ENV_FILE, env);
-  const config = loadModelClockConfig({ configFile: CONFIG_FILE, env });
+  let config = loadModelClockConfig({ configFile: CONFIG_FILE, env });
 
   const args = parseArgs(argv);
   if (argv.length === 0 && process.stdin.isTTY && process.stdout.isTTY) {
@@ -142,6 +142,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   if (args.command === "interactive") {
     clearTerminal();
     Object.assign(args, await readInteractiveOptions(args, env, config));
+    config = loadModelClockConfig({ configFile: CONFIG_FILE, env });
     if (args.command === "exit") {
       return;
     }
@@ -149,6 +150,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 
   if (!args.dryRun && args.command !== "inspect" && !args.inspect) {
     await ensureApiConfig({ args, env, config });
+    config = loadModelClockConfig({ configFile: CONFIG_FILE, env });
   }
 
   const options = buildOptions(args, env, config);
