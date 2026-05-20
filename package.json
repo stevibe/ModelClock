@@ -6,6 +6,14 @@
   "packageManager": "npm@11.14.1",
   "author": "stevibe",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevibe/ModelClock.git"
+  },
+  "homepage": "https://github.com/stevibe/ModelClock#readme",
+  "bugs": {
+    "url": "https://github.com/stevibe/ModelClock/issues"
+  },
   "keywords": [
     "llm",
     "knowledge-cutoff",
