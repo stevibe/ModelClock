@@ -704,6 +704,7 @@ function InteractiveApp({ args, env, initialConfig, initialScreen, resetOnly, se
       title: screen.setup || screen.name === "modelListInput" ? "Setup: Models" : "Edit Models",
       caption: "Enter one or more model names separated by commas.",
       initialValue: formatCsvEnv(provider?.models ?? []),
+      replaceOnFirstInput: false,
       validate: (value) => parseCsvEnv(value).length > 0 ? null : "Enter at least one model name.",
       onBack: back,
       onSubmit: (value) => saveModelList(parseCsvEnv(value), { ...screen, providerId: provider.id })
@@ -1024,9 +1025,9 @@ function CheckboxScreen({ title, caption, items, selectedValues, emptyMessage, o
   );
 }
 
-function TextInputScreen({ title, caption, initialValue = "", password = false, validate, onSubmit, onBack }) {
+function TextInputScreen({ title, caption, initialValue = "", password = false, replaceOnFirstInput = true, validate, onSubmit, onBack }) {
   const [value, setValue] = useState(initialValue);
-  const [pristine, setPristine] = useState(Boolean(initialValue));
+  const [pristine, setPristine] = useState(Boolean(initialValue) && replaceOnFirstInput);
   const [error, setError] = useState("");
   useInput((input, key) => {
     if (key.escape) {
