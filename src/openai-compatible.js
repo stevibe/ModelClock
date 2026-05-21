@@ -2,31 +2,35 @@ const DEFAULT_MAX_REQUEST_ATTEMPTS = 3;
 const DEFAULT_REQUEST_TIMEOUT_MS = 90000;
 const BASE_RETRY_DELAY_MS = 750;
 const MAX_RETRY_DELAY_MS = 8000;
+const OPENROUTER_REASONING_MAX_TOKENS = 512;
 
 export function createOpenAIClient(config) {
   const endpoint = chatCompletionsUrl(config.baseUrl);
+  const reasoningState = {
+    preferredControlIndex: 0
+  };
 
   return {
     async ask({ messages, expectedSoftwareQuestions }) {
-      return retryRequest(() => askOnce({ endpoint, config, messages, expectedSoftwareQuestions }), config);
+      return retryRequest(() => askOnce({ endpoint, config, messages, expectedSoftwareQuestions, reasoningState }), config);
     }
   };
 }
 
-async function askOnce({ endpoint, config, messages, expectedSoftwareQuestions }) {
+async function askOnce({ endpoint, config, messages, expectedSoftwareQuestions, reasoningState }) {
   let parsed;
   try {
-    parsed = await sendChatCompletion({ endpoint, config, messages, useResponseFormat: true });
+    parsed = await sendChatCompletionWithReasoningFallback({ endpoint, config, messages, expectedSoftwareQuestions, useResponseFormat: true, reasoningState });
   } catch (error) {
     if (!isResponseFormatUnsupported(error)) {
       throw error;
     }
-    parsed = await sendChatCompletion({ endpoint, config, messages, useResponseFormat: false });
+    parsed = await sendChatCompletionWithReasoningFallback({ endpoint, config, messages, expectedSoftwareQuestions, useResponseFormat: false, reasoningState });
   }
   let content = extractContent(parsed);
 
   if (!content) {
-    parsed = await sendChatCompletion({ endpoint, config, messages, useResponseFormat: false });
+    parsed = await sendChatCompletionWithReasoningFallback({ endpoint, config, messages, expectedSoftwareQuestions, useResponseFormat: false, reasoningState });
     content = extractContent(parsed);
   }
 
@@ -48,7 +52,32 @@ async function askOnce({ endpoint, config, messages, expectedSoftwareQuestions }
   };
 }
 
-async function sendChatCompletion({ endpoint, config, messages, useResponseFormat }) {
+async function sendChatCompletionWithReasoningFallback(args) {
+  const controls = reasoningControls(args.config);
+  let lastReasoningError = null;
+
+  for (let index = args.reasoningState.preferredControlIndex; index < controls.length; index += 1) {
+    try {
+      const parsed = await sendChatCompletion({ ...args, reasoningControl: controls[index] });
+      const lengthError = answerLengthError(parsed, args.expectedSoftwareQuestions);
+      if (lengthError) {
+        lastReasoningError = lengthError;
+        continue;
+      }
+      args.reasoningState.preferredControlIndex = index;
+      return parsed;
+    } catch (error) {
+      if (!isReasoningControlUnsupported(error)) {
+        throw error;
+      }
+      lastReasoningError = error;
+    }
+  }
+
+  throw lastReasoningError;
+}
+
+async function sendChatCompletion({ endpoint, config, messages, useResponseFormat, reasoningControl }) {
   const requestBody = {
     model: config.model,
     messages,
@@ -56,28 +85,7 @@ async function sendChatCompletion({ endpoint, config, messages, useResponseForma
     max_tokens: config.maxTokens
   };
 
-  if (config.reasoningEffort) {
-    if (isOpenRouterBaseUrl(config.baseUrl)) {
-      requestBody.reasoning = {
-        effort: config.reasoningEffort,
-        exclude: true
-      };
-    } else {
-      requestBody.reasoning_effort = config.reasoningEffort;
-    }
-  }
-
-  const openRouterReasoning = resolveOpenRouterReasoning(config);
-  if (openRouterReasoning && !requestBody.reasoning) {
-    requestBody.reasoning = openRouterReasoning;
-  }
-
-  const enableThinking = resolveEnableThinking(config);
-  if (enableThinking !== undefined) {
-    requestBody.chat_template_kwargs = {
-      enable_thinking: enableThinking
-    };
-  }
+  applyReasoningControl(requestBody, reasoningControl);
 
   if (useResponseFormat) {
     requestBody.response_format = { type: "json_object" };
@@ -208,6 +216,13 @@ function isResponseFormatUnsupported(error) {
   return /response_format|json_object|json mode|extra arguments/iu.test(error.message);
 }
 
+function isReasoningControlUnsupported(error) {
+  if (error?.status !== 400 && error?.status !== 422) {
+    return false;
+  }
+  return /reasoning|thinking|reasoning_effort|thinking_budget|enable_thinking|extra_body|extra arguments|extra inputs|unrecognized|unknown parameter|invalid parameter|unsupported parameter|unexpected keyword/iu.test(error.message);
+}
+
 function extractApiErrorMessage(parsed) {
   if (!parsed || typeof parsed !== "object") {
     return null;
@@ -290,56 +305,67 @@ function countAnswers(content) {
   return [...String(content).matchAll(/\b(YES|NO|UNKNOWN)\b/giu)].length;
 }
 
-function resolveOpenRouterReasoning(config) {
-  if (!isOpenRouterBaseUrl(config.baseUrl)) {
+function answerLengthError(parsed, expectedSoftwareQuestions) {
+  const expectedCount = Array.isArray(expectedSoftwareQuestions) ? expectedSoftwareQuestions.length : 0;
+  if (expectedCount === 0) {
     return null;
   }
-  if (shouldCapOpenRouterReasoning(config.model)) {
-    return {
-      max_tokens: 32,
-      exclude: true
+
+  const choice = parsed?.choices?.[0];
+  const finishReason = choice?.finish_reason ?? choice?.native_finish_reason ?? "unknown";
+  if (String(finishReason).toLowerCase() !== "length") {
+    return null;
+  }
+
+  const answerCount = countAnswers(extractContent(parsed));
+  if (answerCount >= expectedCount) {
+    return null;
+  }
+
+  const completionTokens = parsed?.usage?.completion_tokens;
+  const reasoningTokens = parsed?.usage?.completion_tokens_details?.reasoning_tokens;
+  const tokenDetails = Number.isFinite(Number(completionTokens))
+    ? ` completion tokens: ${completionTokens}${Number.isFinite(Number(reasoningTokens)) ? `, reasoning tokens: ${reasoningTokens}` : ""}.`
+    : "";
+  return new ApiRequestError(
+    `API response only included ${answerCount}/${expectedCount} answers; finish reason: length.${tokenDetails} Try a larger --max-tokens value if this persists.`,
+    { retryable: true }
+  );
+}
+
+function reasoningControls(config) {
+  if (config.reasoningEffort) {
+    return [
+      { reasoning: { effort: config.reasoningEffort, exclude: true }, enableThinking: false },
+      { reasoningEffort: config.reasoningEffort, enableThinking: false },
+      {}
+    ];
+  }
+
+  return [
+    { reasoning: { effort: "none", exclude: true }, enableThinking: false },
+    { reasoningEffort: "none", enableThinking: false },
+    { enableThinking: false },
+    { reasoning: { effort: "low", exclude: true }, enableThinking: false },
+    { reasoningEffort: "minimal", enableThinking: false },
+    { reasoningEffort: "low", enableThinking: false },
+    { reasoning: { max_tokens: OPENROUTER_REASONING_MAX_TOKENS, exclude: true }, enableThinking: false },
+    {}
+  ];
+}
+
+function applyReasoningControl(requestBody, control = {}) {
+  if (control.reasoning) {
+    requestBody.reasoning = control.reasoning;
+  }
+  if (control.reasoningEffort) {
+    requestBody.reasoning_effort = control.reasoningEffort;
+  }
+  if (control.enableThinking !== undefined) {
+    requestBody.chat_template_kwargs = {
+      enable_thinking: control.enableThinking
     };
   }
-  return null;
-}
-
-function isOpenRouterBaseUrl(baseUrl = "") {
-  try {
-    return new URL(baseUrl).hostname.endsWith("openrouter.ai");
-  } catch {
-    return String(baseUrl).includes("openrouter.ai");
-  }
-}
-
-function resolveEnableThinking(config) {
-  if (config.enableThinking !== undefined) {
-    return config.enableThinking;
-  }
-
-  if (shouldDisableThinkingByDefault(config.model)) {
-    return false;
-  }
-
-  return undefined;
-}
-
-function shouldCapOpenRouterReasoning(model = "") {
-  const normalized = model.toLowerCase();
-  return normalized.includes("google/gemini-3.5-");
-}
-
-function shouldDisableThinkingByDefault(model = "") {
-  const normalized = model.toLowerCase();
-  const isQwenThinkingModel =
-    normalized.includes("qwen/qwen3.5-") ||
-    normalized.includes("qwen/qwen3.6-");
-
-  if (!isQwenThinkingModel) {
-    return false;
-  }
-
-  const provider = normalized.includes(":") ? normalized.split(":").at(-1) : "";
-  return ["", "together", "deepinfra", "fastest", "cheapest"].includes(provider);
 }
 
 function chatCompletionsUrl(baseUrl) {

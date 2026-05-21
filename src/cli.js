@@ -52,7 +52,6 @@ const PROVIDER_PRESETS = [
 const REMOVED_OPTIONS = new Set([
   "dataset",
   "include-metadata",
-  "max-tokens",
   "min-items",
   "probe-mode",
   "sample-size",
@@ -1249,7 +1248,7 @@ function buildOptions(args, env, config) {
     maxSteps: DEFAULTS.maxSteps,
     trials: DEFAULTS.trials,
     temperature: DEFAULTS.temperature,
-    maxTokens: DEFAULTS.maxTokens,
+    maxTokens: parsePositiveInteger(args.maxTokens ?? env.MODEL_CLOCK_MAX_TOKENS, DEFAULTS.maxTokens),
     probeMode: DEFAULTS.probeMode,
     replicates: DEFAULTS.replicates,
     probeDatesPerRound: DEFAULTS.probeDatesPerRound,
@@ -1265,6 +1264,14 @@ function buildOptions(args, env, config) {
   };
 
   return options;
+}
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
 }
 
 function resolveModelRefs(args, env, config) {
@@ -1631,6 +1638,7 @@ Options:
   --model <name>            Run one saved model for this invocation
   --models <a,b>            Run comma-separated saved models for this invocation
   --data-dir <path>         Use a custom data directory containing software-releases.json
+  --max-tokens <number>     Override response token budget for models that need more room
   --dry-run                 Do not call an API; echo expected answers for smoke tests
   --json                    Print full result as JSON
   -y, --yes                 Skip confirmation for reset
